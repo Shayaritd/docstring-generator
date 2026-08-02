@@ -1,0 +1,20 @@
+﻿# Core
+torch>=2.4.0
+transformers>=4.46.0
+peft>=0.13.0
+bitsandbytes>=0.44.0
+accelerate>=1.0.0
+trl>=0.11.0
+datasets>=3.0.0
+
+# API
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.9.0
+
+# UI
+streamlit>=1.38.0
+
+# Utils
+pyyaml>=6.0.0
+python-dotenv>=1.0.0
