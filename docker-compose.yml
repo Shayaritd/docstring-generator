@@ -1,35 +1,59 @@
-﻿version: '3.8'
-
-services:
+﻿services:
   api:
     build:
       context: .
       dockerfile: docker/Dockerfile
+    image: docstring-generator:latest
     ports:
-      - "8000:8000"
+      - "\:8000"
+    env_file:
+      - .env
     environment:
-      - BASE_MODEL=\
-      - ADAPTER_PATH=\
-      - GENERATION_TIMEOUT_SECONDS=\
-      - LOG_LEVEL=\
-      - HF_HOME=/model_cache
+      BASE_MODEL: \
+      ADAPTER_PATH: \
+      GENERATION_TIMEOUT_SECONDS: \
+      LOG_LEVEL: \
+      HF_HOME: /model_cache
     volumes:
       - model_cache:/model_cache
-      - ./adapters:/adapters
+      - ./adapters:/adapters:ro
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              count: 1
               capabilities: [gpu]
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
-      retries: 3
       start_period: 90s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres:
+    image: postgres:17-alpine
+    profiles: ["logging"]
+    environment:
+      POSTGRES_DB: \
+      POSTGRES_USER: \
+      POSTGRES_PASSWORD: \
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
 volumes:
   model_cache:
+  postgres_data:
