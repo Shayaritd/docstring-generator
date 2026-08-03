@@ -1,0 +1,46 @@
+﻿# Docstring Generator — Training Configuration
+# All hyperparameters live here so experiments (Phase 3) only require
+# copying this file and changing values, not editing train.py.
+
+model:
+  base_model: "Qwen/Qwen2.5-Coder-1.5B"
+
+data:
+  train_path: "train.jsonl"
+  val_path: "val.jsonl"
+  test_path: "test.jsonl"
+  max_seq_length: 512
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: ["q_proj", "v_proj"]
+  bias: "none"
+
+training:
+  output_dir: "./checkpoints"
+  num_train_epochs: 3
+  per_device_train_batch_size: 8
+  per_device_eval_batch_size: 8
+  gradient_accumulation_steps: 1
+  learning_rate: 0.0002
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.03
+  save_strategy: "steps"
+  save_steps: 100
+  save_total_limit: 2
+  eval_strategy: "epoch"
+  logging_steps: 10
+  early_stopping_patience: 2
+
+generation:
+  max_new_tokens: 128
+  num_sample_generations_per_epoch: 3
+  max_bleu_eval_examples: 50
+
+wandb:
+  enabled: true
+  project: "docstring-generator"
+  entity: null
+  run_name: null
