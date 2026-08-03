@@ -1,0 +1,46 @@
+﻿{
+  "tokenizer_used": "approx_regex_tokenizer",
+  "total_examples": 135,
+  "category_counts": {
+    "basic": 24,
+    "multi_param": 5,
+    "type_hinted": 12,
+    "exception": 12,
+    "nested": 6,
+    "args_kwargs": 5,
+    "generator": 8,
+    "classmethod": 4,
+    "staticmethod": 4,
+    "async": 31,
+    "decorator": 24
+  },
+  "complexity_bucket_counts": {
+    "simple": 71,
+    "medium": 41,
+    "complex": 23
+  },
+  "function_length": {
+    "avg_chars": 123.42,
+    "avg_lines": 4.24,
+    "min_lines": 2,
+    "max_lines": 11
+  },
+  "docstring_length": {
+    "avg_chars": 205.64,
+    "avg_lines": 8.27,
+    "min_lines": 4,
+    "max_lines": 15
+  },
+  "token_counts": {
+    "function_avg_tokens": 29.63,
+    "docstring_avg_tokens": 44.53,
+    "function_max_tokens": 58,
+    "docstring_max_tokens": 66
+  },
+  "parameter_distribution": {
+    "0": 13,
+    "1": 66,
+    "2": 47,
+    "3": 9
+  }
+}
