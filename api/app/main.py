@@ -30,7 +30,7 @@ logger = setup_logging()
 
 BASE_MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen2.5-Coder-1.5B")
 ADAPTER_PATH = os.environ.get("ADAPTER_PATH")  # None = base model only, unset LoRA
-GENERATION_TIMEOUT_SECONDS = float(os.environ.get("GENERATION_TIMEOUT_SECONDS", "30"))
+GENERATION_TIMEOUT_SECONDS = float(os.environ.get("GENERATION_TIMEOUT_SECONDS", "300"))
 MODEL_LABEL = os.environ.get("MODEL_LABEL", "docstring-generator-v1")
 
 

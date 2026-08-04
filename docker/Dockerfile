@@ -1,4 +1,4 @@
-﻿# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -44,7 +44,7 @@ RUN chmod +x /entrypoint.sh
 ENV HF_HOME=/model_cache \
     TRANSFORMERS_CACHE=/model_cache \
     BASE_MODEL=Qwen/Qwen2.5-Coder-1.5B \
-    GENERATION_TIMEOUT_SECONDS=30 \
+    GENERATION_TIMEOUT_SECONDS=120 \
     LOG_LEVEL=info
 
 RUN mkdir -p /model_cache /adapters && chown -R appuser:appuser /app /model_cache /adapters

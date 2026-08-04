@@ -1,1 +1,1 @@
-﻿# Empty file to make src/core a package
+﻿# Core package - AST feature extraction

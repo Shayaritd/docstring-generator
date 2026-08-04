@@ -1,4 +1,4 @@
-﻿import asyncio
+import asyncio
 import os
 import sys
 import time
@@ -86,6 +86,17 @@ class ModelManager:
             kwargs["do_sample"] = False
         return kwargs
 
+    def _extract_docstring(self, text: str) -> str:
+        if '"""' in text:
+            parts = text.split('"""')
+            if len(parts) > 1:
+                return parts[1].strip()
+        if "'''" in text:
+            parts = text.split("'''")
+            if len(parts) > 1:
+                return parts[1].strip()
+        return text.strip()
+
     def generate_sync(self, function_code: str, max_length: int = 150, temperature: float = 0.0) -> str:
         if not self.is_loaded:
             raise RuntimeError("Model is not loaded")
@@ -94,6 +105,7 @@ class ModelManager:
 
         prompt = self._build_prompt(function_code)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
+        input_len = inputs.input_ids.shape[1]
 
         try:
             with torch.no_grad():
@@ -104,8 +116,9 @@ class ModelManager:
         except torch.cuda.OutOfMemoryError as e:
             raise RuntimeError(f"GPU out of memory during generation: {e}") from e
 
-        full_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
-        return full_text[len(prompt):].strip() if full_text.startswith(prompt) else full_text.strip()
+        generated_ids = output_ids[0][input_len:]
+        decoded = self.tokenizer.decode(generated_ids, skip_special_tokens=True)
+        return self._extract_docstring(decoded)
 
     async def generate_async(self, function_code: str, max_length: int = 150, temperature: float = 0.0) -> str:
         return await asyncio.to_thread(self.generate_sync, function_code, max_length, temperature)
@@ -121,6 +134,7 @@ class ModelManager:
         self.tokenizer.padding_side = "left"
         try:
             inputs = self.tokenizer(prompts, return_tensors="pt", padding=True).to(self.model.device)
+            input_len = inputs.input_ids.shape[1]
             with torch.no_grad():
                 output_ids = self.model.generate(
                     **inputs,
@@ -132,9 +146,9 @@ class ModelManager:
             self.tokenizer.padding_side = original_padding_side
 
         results = []
-        for i, prompt in enumerate(prompts):
-            full_text = self.tokenizer.decode(output_ids[i], skip_special_tokens=True)
-            results.append(full_text[len(prompt):].strip() if full_text.startswith(prompt) else full_text.strip())
+        for i in range(len(prompts)):
+            generated_ids = output_ids[i][input_len:]
+            results.append(self.tokenizer.decode(generated_ids, skip_special_tokens=True).strip())
         return results
 
     def generate_stream(self, function_code: str, max_length: int = 150, temperature: float = 0.0):

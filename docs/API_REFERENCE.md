@@ -49,7 +49,7 @@ Error: model not loaded (503)
 Error: generation timeout (504)
 
 ```json
-{"detail": "Generation exceeded 30.0s timeout. Try a shorter function or lower max_length."}
+{"detail": "Generation exceeded 120.0s timeout. Try a shorter function or lower max_length."}
 ```
 
 ## POST `/generate/batch`
@@ -87,7 +87,7 @@ Streams plain-text chunks as they're generated (`-N` disables curl's output buff
 | --- | --- | --- |
 | BASE_MODEL | Qwen/Qwen2.5-Coder-1.5B | Base model to load |
 | ADAPTER_PATH | unset | Path to LoRA adapter; omit to serve base model only |
-| GENERATION_TIMEOUT_SECONDS | 30 | Per-request generation timeout |
+| GENERATION_TIMEOUT_SECONDS | 120 | Per-request generation timeout |
 | MODEL_LABEL | docstring-generator-v1 | Label returned in the model field of responses |
 
 ## Running
