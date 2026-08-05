@@ -125,17 +125,24 @@ async def health(request: Request):
     },
 )
 async def generate(req: GenerateRequest, request: Request):
-    """Generate a Google-style docstring for a single Python function.
+    """Generate a Python docstring for a single function.
 
     Example request:
-        {"function_code": "def add(a, b):\n    return a + b", "max_length": 150, "temperature": 0.0}
+        {"function_code": "def add(a, b):\n    return a + b", "max_length": 150, "temperature": 0.0, "style": "Google Style"}
     """
     manager = get_model_manager(request)
     start = time.perf_counter()
 
     try:
-        docstring = await asyncio.wait_for(
-            manager.generate_async(req.function_code, req.max_length, req.temperature),
+        result = await asyncio.wait_for(
+            manager.generate_async(
+                req.function_code,
+                req.max_length,
+                req.temperature,
+                req.style,
+                req.enable_self_correction,
+                req.enable_schema_aware,
+            ),
             timeout=GENERATION_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -145,7 +152,15 @@ async def generate(req: GenerateRequest, request: Request):
         )
 
     latency_ms = (time.perf_counter() - start) * 1000
-    return GenerateResponse(docstring=docstring, model=MODEL_LABEL, latency_ms=round(latency_ms, 2))
+    return GenerateResponse(
+        docstring=result["docstring"],
+        quality=result["quality"],
+        confidence=result["confidence"],
+        hallucinations=result["hallucinations"],
+        corrected=result["corrected"],
+        model=MODEL_LABEL,
+        latency_ms=round(latency_ms, 2)
+    )
 
 
 @app.post(
@@ -155,16 +170,10 @@ async def generate(req: GenerateRequest, request: Request):
     responses={422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
 )
 async def generate_batch(req: BatchGenerateRequest, request: Request):
-    """Generate docstrings for multiple functions in one batched forward pass
-    (more GPU-efficient than calling /generate N times).
-
-    Per-item errors (e.g. one malformed function in the batch) are reported in
-    that item's result rather than failing the whole batch.
-    """
+    """Generate docstrings for multiple functions in one batched forward pass."""
     manager = get_model_manager(request)
     start = time.perf_counter()
 
-    # Validate each function individually so one bad item doesn't 422 the whole batch
     from .schemas import validate_python_function_code
     valid_indices, valid_codes, results = [], [], [None] * len(req.functions)
     for i, code in enumerate(req.functions):
@@ -179,13 +188,13 @@ async def generate_batch(req: BatchGenerateRequest, request: Request):
         try:
             generated = await asyncio.wait_for(
                 asyncio.to_thread(manager.generate_batch, valid_codes, req.max_length, req.temperature),
-                timeout=GENERATION_TIMEOUT_SECONDS * max(1, len(valid_codes) // 4),  # scale timeout with batch size
+                timeout=GENERATION_TIMEOUT_SECONDS * max(1, len(valid_codes) // 4),
             )
         except asyncio.TimeoutError:
             raise HTTPException(status_code=504, detail="Batch generation timed out.")
 
-        for idx, doc in zip(valid_indices, generated):
-            results[idx] = BatchGenerateResult(index=idx, docstring=doc)
+        for idx, res_dict in zip(valid_indices, generated):
+            results[idx] = BatchGenerateResult(index=idx, docstring=res_dict["docstring"])
 
     total_latency_ms = (time.perf_counter() - start) * 1000
     return BatchGenerateResponse(results=results, model=MODEL_LABEL, total_latency_ms=round(total_latency_ms, 2))
@@ -193,26 +202,23 @@ async def generate_batch(req: BatchGenerateRequest, request: Request):
 
 @app.post("/generate/stream", tags=["inference"])
 async def generate_stream(req: GenerateRequest, request: Request):
-    """Stream the generated docstring token-by-token as plain text chunks.
-
-    Note: streaming runs the blocking HF generate() call in a background
-    thread (via the model_manager's internal Thread), so it doesn't block
-    the event loop, but it does hold a GPU generation slot for its duration
-    same as a normal request - the timeout wrapper does NOT apply to
-    streaming responses (the client is expected to read at its own pace).
-    """
+    """Stream the generated docstring token-by-token as plain text chunks."""
     manager = get_model_manager(request)
 
     async def token_stream():
         loop = asyncio.get_event_loop()
-        # generate_stream() is itself a blocking generator; iterate it in a thread
-        # and forward chunks via a queue so the event loop isn't blocked.
         queue: asyncio.Queue = asyncio.Queue()
         SENTINEL = object()
 
         def producer():
             try:
-                for chunk in manager.generate_stream(req.function_code, req.max_length, req.temperature):
+                for chunk in manager.generate_stream(
+                    req.function_code,
+                    req.max_length,
+                    req.temperature,
+                    req.style,
+                    req.enable_schema_aware,
+                ):
                     loop.call_soon_threadsafe(queue.put_nowait, chunk)
             except Exception as e:
                 loop.call_soon_threadsafe(queue.put_nowait, e)
@@ -267,3 +273,12 @@ async def reload_adapter(req: AdapterReloadRequest, request: Request):
 
     logger.info("Adapter reloaded", extra={"adapter_path": req.adapter_path, "reload_time_s": round(reload_time, 2)})
     return AdapterReloadResponse(status="ok", adapter_path=req.adapter_path, reload_time_s=round(reload_time, 2))
+f r o m   s l o w a p i   i m p o r t   L i m i t e r ,   _ r a t e _ l i m i t _ e x c e e d e d _ h a n d l e r  
+ f r o m   s l o w a p i . u t i l   i m p o r t   g e t _ r e m o t e _ a d d r e s s  
+ f r o m   s l o w a p i . e r r o r s   i m p o r t   R a t e L i m i t E x c e e d e d  
+ l i m i t e r   =   L i m i t e r ( k e y _ f u n c = g e t _ r e m o t e _ a d d r e s s )  
+ a p p . s t a t e . l i m i t e r   =   l i m i t e r  
+ a p p . a d d _ e x c e p t i o n _ h a n d l e r ( R a t e L i m i t E x c e e d e d ,   _ r a t e _ l i m i t _ e x c e e d e d _ h a n d l e r )  
+ @ l i m i t e r . l i m i t ( \  
+ 1 0 / m i n u t e \ )  
+ 

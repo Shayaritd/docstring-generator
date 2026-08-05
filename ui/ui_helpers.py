@@ -13,13 +13,9 @@ def call_generate_api(api_url, function_code, max_length=150, temperature=0.0, t
         response = requests.post(url, json=payload, timeout=timeout)
         if response.status_code == 200:
             data = response.json()
-            # Add quality scoring
             data["quality"] = score_quality(data.get("docstring", ""), function_code)
-            # Add confidence
             data["confidence"] = calculate_confidence(data.get("docstring", ""), function_code)
-            # Add hallucinations
             data["hallucinations"] = check_hallucinations(data.get("docstring", ""), function_code)
-            # Check if self-correction was applied
             data["corrected"] = data.get("corrected", False)
             return {"success": True, **data}
         else:
@@ -37,19 +33,30 @@ def check_api_health(api_url, timeout=5.0):
     except:
         return {"reachable": False, "model_loaded": False}
 
+def validate_code_syntax(code):
+    """Check if Python code is syntactically valid."""
+    if not code or not code.strip():
+        return {"valid": False, "error": "Code cannot be empty"}
+    try:
+        ast.parse(code)
+        return {"valid": True}
+    except SyntaxError as e:
+        return {"valid": False, "error": f"Syntax Error: {e.msg} at line {e.lineno}, column {e.offset}"}
+
 def score_quality(docstring, function_code):
     scores = {"accuracy": 4.0, "completeness": 4.0, "clarity": 4.0, "conciseness": 4.0}
-    # Simple scoring logic
     if docstring:
         lines = docstring.split("\n")
         if len(lines) > 3:
-            scores["clarity"] = min(5.0, 4.0 + len(lines) * 0.1)
+            scores["clarity"] = min(5.0, 4.0 + len(lines) * 0.05)
         if "Args:" in docstring:
             scores["completeness"] = min(5.0, scores["completeness"] + 0.5)
         if "Returns:" in docstring:
             scores["completeness"] = min(5.0, scores["completeness"] + 0.5)
+        if "Raises:" in docstring:
+            scores["completeness"] = min(5.0, scores["completeness"] + 0.3)
         if len(docstring) > 100:
-            scores["conciseness"] = max(3.0, 5.0 - len(docstring) * 0.005)
+            scores["conciseness"] = max(3.0, 5.0 - len(docstring) * 0.003)
     return scores
 
 def calculate_confidence(docstring, function_code):
@@ -74,7 +81,7 @@ def check_hallucinations(docstring, function_code):
         if func:
             params = [arg.arg for arg in func.args.args if arg.arg not in ("self", "cls")]
             for param in params:
-                if param not in docstring and param not in hallucinations:
+                if param not in docstring:
                     hallucinations.append(f"Parameter '{param}' not documented")
     except:
         pass
@@ -87,16 +94,6 @@ def format_latency(latency_ms):
         return f"{latency_ms/1000:.1f} s"
     else:
         return f"{latency_ms/60000:.1f} min"
-
-def format_quality_score(score):
-    if score >= 4.5:
-        return "🌟 Excellent"
-    elif score >= 3.5:
-        return "✅ Good"
-    elif score >= 2.5:
-        return "⚠️ Average"
-    else:
-        return "❌ Needs Improvement"
 
 def get_confidence_level(confidence):
     if confidence >= 80:

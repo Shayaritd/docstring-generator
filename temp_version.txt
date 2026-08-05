@@ -1,0 +1,7 @@
+﻿@app.get("/version")
+async def version_info():
+    return {
+        "version": "1.0.0",
+        "model": "Qwen2.5-Coder-1.5B",
+        "api_status": "online"
+    }

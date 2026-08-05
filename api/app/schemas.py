@@ -1,4 +1,4 @@
-﻿import ast
+import ast
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator, ConfigDict
@@ -26,6 +26,9 @@ class GenerateRequest(BaseModel):
                     "function_code": "def add(a, b):\n    return a + b",
                     "max_length": 150,
                     "temperature": 0.0,
+                    "style": "Google Style",
+                    "enable_self_correction": False,
+                    "enable_schema_aware": False,
                 }
             ]
         }
@@ -34,6 +37,9 @@ class GenerateRequest(BaseModel):
     function_code: str = Field(..., description="Python source containing the function to document", min_length=1)
     max_length: int = Field(150, ge=16, le=512, description="Maximum tokens to generate")
     temperature: float = Field(0.0, ge=0.0, le=2.0, description="Sampling temperature. 0.0 = greedy/deterministic")
+    style: str = Field("Google Style", description="Docstring style preset: Google Style, NumPy Style, Concise Internal")
+    enable_self_correction: bool = Field(False, description="Enable self-correction loop for missing parameters")
+    enable_schema_aware: bool = Field(False, description="Incorporate parsed function signature metadata into the prompt")
 
     @field_validator("function_code")
     @classmethod
@@ -50,6 +56,10 @@ class GenerateResponse(BaseModel):
                     "docstring": "Add two numbers together.\n\nArgs:\n    a (int): The first number.\n    b (int): The second number.\n\nReturns:\n    int: The sum of the two numbers.",
                     "model": "docstring-generator-v1 (Qwen2.5-Coder-1.5B + LoRA)",
                     "latency_ms": 342.7,
+                    "quality": {"accuracy": 5.0, "completeness": 5.0, "clarity": 5.0, "conciseness": 5.0},
+                    "confidence": 100,
+                    "hallucinations": [],
+                    "corrected": False,
                 }
             ]
         }
@@ -58,6 +68,10 @@ class GenerateResponse(BaseModel):
     docstring: str
     model: str
     latency_ms: float
+    quality: Optional[dict] = None
+    confidence: Optional[int] = None
+    hallucinations: Optional[List[str]] = None
+    corrected: bool = False
 
 
 class BatchGenerateRequest(BaseModel):
