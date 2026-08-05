@@ -16,6 +16,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from .model_manager import ModelManager, ModelLoadError
 from .schemas import (
@@ -23,6 +26,7 @@ from .schemas import (
     BatchGenerateRequest, BatchGenerateResponse, BatchGenerateResult,
     HealthResponse, ErrorResponse,
     AdapterReloadRequest, AdapterReloadResponse,
+    VersionResponse,
 )
 from .logging_config import setup_logging
 
@@ -32,6 +36,9 @@ BASE_MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen2.5-Coder-1.5B")
 ADAPTER_PATH = os.environ.get("ADAPTER_PATH")  # None = base model only, unset LoRA
 GENERATION_TIMEOUT_SECONDS = float(os.environ.get("GENERATION_TIMEOUT_SECONDS", "300"))
 MODEL_LABEL = os.environ.get("MODEL_LABEL", "docstring-generator-v1")
+
+# Configure rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -65,6 +72,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # --- Error handlers: convert internal exceptions into consistent ErrorResponse JSON ---
@@ -114,6 +124,15 @@ async def health(request: Request):
     )
 
 
+@app.get("/version", response_model=VersionResponse, tags=["monitoring"])
+async def get_version():
+    """Returns the API version and active model label info."""
+    return VersionResponse(
+        version="1.0.0",
+        model=MODEL_LABEL
+    )
+
+
 @app.post(
     "/generate",
     response_model=GenerateResponse,
@@ -124,6 +143,7 @@ async def health(request: Request):
         504: {"model": ErrorResponse, "description": "Generation timed out"},
     },
 )
+@limiter.limit("10/minute")
 async def generate(req: GenerateRequest, request: Request):
     """Generate a Python docstring for a single function.
 
@@ -169,6 +189,7 @@ async def generate(req: GenerateRequest, request: Request):
     tags=["inference"],
     responses={422: {"model": ErrorResponse}, 503: {"model": ErrorResponse}},
 )
+@limiter.limit("10/minute")
 async def generate_batch(req: BatchGenerateRequest, request: Request):
     """Generate docstrings for multiple functions in one batched forward pass."""
     manager = get_model_manager(request)
@@ -201,6 +222,7 @@ async def generate_batch(req: BatchGenerateRequest, request: Request):
 
 
 @app.post("/generate/stream", tags=["inference"])
+@limiter.limit("10/minute")
 async def generate_stream(req: GenerateRequest, request: Request):
     """Stream the generated docstring token-by-token as plain text chunks."""
     manager = get_model_manager(request)
@@ -273,12 +295,3 @@ async def reload_adapter(req: AdapterReloadRequest, request: Request):
 
     logger.info("Adapter reloaded", extra={"adapter_path": req.adapter_path, "reload_time_s": round(reload_time, 2)})
     return AdapterReloadResponse(status="ok", adapter_path=req.adapter_path, reload_time_s=round(reload_time, 2))
-f r o m   s l o w a p i   i m p o r t   L i m i t e r ,   _ r a t e _ l i m i t _ e x c e e d e d _ h a n d l e r  
- f r o m   s l o w a p i . u t i l   i m p o r t   g e t _ r e m o t e _ a d d r e s s  
- f r o m   s l o w a p i . e r r o r s   i m p o r t   R a t e L i m i t E x c e e d e d  
- l i m i t e r   =   L i m i t e r ( k e y _ f u n c = g e t _ r e m o t e _ a d d r e s s )  
- a p p . s t a t e . l i m i t e r   =   l i m i t e r  
- a p p . a d d _ e x c e p t i o n _ h a n d l e r ( R a t e L i m i t E x c e e d e d ,   _ r a t e _ l i m i t _ e x c e e d e d _ h a n d l e r )  
- @ l i m i t e r . l i m i t ( \  
- 1 0 / m i n u t e \ )  
- 

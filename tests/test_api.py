@@ -1,4 +1,4 @@
-﻿import pytest
+import pytest
 from unittest.mock import MagicMock, AsyncMock
 
 import sys
@@ -61,3 +61,64 @@ def test_generation_kwargs_sampling_includes_temperature():
     kwargs = mgr._generation_kwargs(150, 0.7)
     assert kwargs["do_sample"] is True
     assert kwargs["temperature"] == 0.7
+
+
+def test_scoring_good_add():
+    from ui.ui_helpers import score_quality, calculate_confidence
+    code = "def add(a, b):\n    return a + b"
+    docstring = """Add two numbers.
+
+    Args:
+        a: First number.
+        b: Second number.
+
+    Returns:
+        The sum of a and b.
+    """
+    scores = score_quality(docstring, code)
+    avg_score = sum(scores.values()) / len(scores)
+    assert 4.0 <= avg_score <= 4.5
+    conf = calculate_confidence(docstring, code)
+    assert conf > 50
+
+
+def test_scoring_lower_calculate():
+    from ui.ui_helpers import score_quality, calculate_confidence
+    code = "def calculate(a, b, c):\n    return a + b + c"
+    docstring = """Calculate the sum.
+
+    Args:
+        a: First number.
+        b: Second number.
+
+    Returns:
+        The sum of the numbers.
+    """
+    scores = score_quality(docstring, code)
+    avg_score = sum(scores.values()) / len(scores)
+    assert 3.0 <= avg_score <= 4.0
+    conf = calculate_confidence(docstring, code)
+    assert conf < 90
+
+
+def test_scoring_best_divide():
+    from ui.ui_helpers import score_quality, calculate_confidence
+    code = "def divide(a, b):\n    if b == 0:\n        raise ValueError('Cannot divide by zero')\n    return a / b"
+    docstring = """Divide two numbers.
+
+    Args:
+        a (float): The numerator.
+        b (float): The denominator.
+
+    Returns:
+        float: The result of division.
+
+    Raises:
+        ValueError: If the denominator is zero.
+    """
+    scores = score_quality(docstring, code)
+    avg_score = sum(scores.values()) / len(scores)
+    assert 4.5 <= avg_score <= 5.0
+    conf = calculate_confidence(docstring, code)
+    assert conf >= 90
+
