@@ -126,3 +126,8 @@ class AdapterReloadResponse(BaseModel):
     status: str
     adapter_path: str
     reload_time_s: float
+
+
+class VersionResponse(BaseModel):
+    version: str
+    model: str

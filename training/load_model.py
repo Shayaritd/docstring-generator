@@ -1,4 +1,4 @@
-import torch
+﻿import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import LoraConfig, get_peft_model
 
@@ -17,6 +17,7 @@ def load_quantized_model(model_name: str, attach_lora: bool = False):
             quantization_config=bnb_config,
             device_map="auto",
             trust_remote_code=True,
+            attn_implementation="eager"  # ADD THIS LINE
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
@@ -24,5 +25,6 @@ def load_quantized_model(model_name: str, attach_lora: bool = False):
             device_map="cpu",
             torch_dtype=torch.float32,
             trust_remote_code=True,
+            attn_implementation="eager"  # ADD THIS LINE
         )
     return model

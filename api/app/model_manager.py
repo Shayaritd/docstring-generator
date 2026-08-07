@@ -365,65 +365,158 @@ def check_hallucinations(docstring: str, schema_info: dict) -> list:
     return hallucinations
 
 def calculate_confidence(docstring: str, schema_info: dict, missing_params: list, hallucinations: list) -> int:
-    confidence = 100
-    if not docstring or len(docstring) < 30:
-        confidence -= 25
-    if missing_params:
-        confidence -= 15 * len(missing_params)
-    if hallucinations:
-        confidence -= 20 * len(hallucinations)
+    # Start at 50%
+    confidence = 50
     
-    if schema_info:
-        docstring_lower = docstring.lower()
-        if schema_info["returns"] and not any(r in docstring_lower for r in ["returns", "return"]):
-            confidence -= 15
-        if schema_info["raises"] and not any(r in docstring_lower for r in ["raises", "raise"]):
-            confidence -= 10
+    if not docstring or not docstring.strip():
+        return 10
+        
+    params = schema_info["params"] if (schema_info and "params" in schema_info) else []
+    has_raise = bool(schema_info.get("raises")) if schema_info else False
+    has_return = bool(schema_info.get("returns")) if schema_info else False
+    
+    has_args = any(x in docstring for x in ["Args:", "Parameters:", "Arguments:"])
+    has_returns = any(x in docstring for x in ["Returns:", "Yields:"])
+    has_raises = "Raises:" in docstring
+    
+    # Args section
+    if params:
+        # Since missing_params was precomputed via regex \b, we can just use len(missing_params)
+        documented = len(params) - len(missing_params)
+        if len(missing_params) == 0 and has_args:
+            confidence += 15
+        else:
+            confidence -= len(missing_params) * 15
+    else:
+        if not has_args:
+            confidence += 15
             
-    return max(0, min(100, confidence))
+    # Returns section
+    if has_return:
+        if has_returns:
+            confidence += 15
+        else:
+            confidence -= 10
+    else:
+        if not has_returns:
+            confidence += 15
+            
+    # Raises section
+    if has_raise:
+        if has_raises:
+            confidence += 10
+        else:
+            confidence -= 10
+    else:
+        if not has_raises:
+            confidence += 10
+            
+    # Hallucinations penalty
+    if hallucinations:
+        confidence -= len(hallucinations) * 15
+        
+    # Length check
+    if len(docstring) < 40:
+        confidence -= 15
+    elif len(docstring) > 600:
+        confidence -= 10
+        
+    return min(100, max(0, confidence))
 
 def score_quality(docstring: str, schema_info: dict, missing_params: list, hallucinations: list) -> dict:
-    scores = {"accuracy": 5.0, "completeness": 5.0, "clarity": 5.0, "conciseness": 5.0}
+    scores = {"accuracy": 0.0, "completeness": 0.0, "clarity": 0.0, "conciseness": 0.0}
     
-    if hallucinations:
-        scores["accuracy"] = max(1.0, 5.0 - len(hallucinations) * 1.5)
+    if not docstring or not docstring.strip():
+        return scores
         
-    if not docstring:
-        scores["completeness"] = 1.0
+    has_args_section = any(x in docstring for x in ["Args:", "Parameters:", "Arguments:"])
+    has_returns_section = any(x in docstring for x in ["Returns:", "Yields:"])
+    has_raises_section = "Raises:" in docstring
+    
+    params = schema_info["params"] if (schema_info and "params" in schema_info) else []
+    has_raise = bool(schema_info.get("raises")) if schema_info else False
+    has_return = bool(schema_info.get("returns")) if schema_info else False
+    
+    # 1. ACCURACY
+    if params:
+        documented = len(params) - len(missing_params)
+        accuracy = (documented / len(params)) * 3.0
+        if documented == len(params):
+            accuracy = 4.5
+            
+            # Penalize missing type info in params
+            missing_types = 0
+            for p in params:
+                pname = p["name"]
+                match = re.search(r'^\s*' + re.escape(pname) + r'\s*(\([^)]+\)|:[a-zA-Z_0-9]+)\s*:', docstring, re.MULTILINE)
+                if not match:
+                    missing_types += 1
+            accuracy -= missing_types * 0.5
+            
+        if hallucinations:
+            accuracy -= len(hallucinations) * 1.0
+            
+        scores["accuracy"] = max(1.0, min(5.0, accuracy))
     else:
-        comp_deductions = 0.0
-        if missing_params:
-            comp_deductions += len(missing_params) * 1.0
-        if schema_info:
-            docstring_lower = docstring.lower()
-            if schema_info["returns"] and not any(r in docstring_lower for r in ["returns", "return"]):
-                comp_deductions += 0.5
-            if schema_info["raises"] and not any(r in docstring_lower for r in ["raises", "raise"]):
-                comp_deductions += 0.5
-        scores["completeness"] = max(1.0, 5.0 - comp_deductions)
+        scores["accuracy"] = 4.0
         
-    if not docstring:
-        scores["clarity"] = 1.0
-    else:
-        clarity_score = 4.0
-        lines = [l.strip() for l in docstring.split("\n") if l.strip()]
-        if lines:
-            if lines[0] and lines[0][0].isupper():
-                clarity_score += 0.5
-            if lines[0] and lines[0][-1] in (".", "?", "!"):
-                clarity_score += 0.5
-        if "Args:" in docstring or "Parameters:" in docstring:
-            clarity_score = min(5.0, clarity_score + 0.5)
-        scores["clarity"] = max(1.0, min(5.0, clarity_score))
+    # 2. COMPLETENESS
+    completeness = 0.0
+    if has_args_section: completeness += 1.5
+    if has_returns_section: completeness += 1.5
+    if has_raises_section: completeness += 1.0
+    
+    if params and not has_args_section:
+        completeness -= 1.0
         
-    if not docstring:
-        scores["conciseness"] = 1.0
+    if params:
+        completeness -= len(missing_params) * 1.0
+        
+    scores["completeness"] = max(1.0, min(5.0, completeness + 0.5))
+    
+    # 3. CLARITY
+    clarity = 0.0
+    lines = [l.strip() for l in docstring.split("\n") if l.strip()]
+    if lines:
+        summary = lines[0].replace('"""', '').strip()
+        if summary and summary[0].isupper():
+            clarity += 0.5
+        if summary and summary[-1] in (".", "?", "!"):
+            clarity += 0.5
+            
+    if len(lines) >= 5:
+        clarity += 0.5
+    if len(lines) >= 8:
+        clarity += 0.5
+    if has_args_section and has_returns_section:
+        clarity += 0.5
+    if has_raises_section:
+        clarity += 0.5
+        
+    # Penalize unclear parameter/return descriptions (1 or fewer words)
+    unclear_penalties = 0.0
+    param_names = [p["name"] for p in params]
+    for line in lines:
+        match = re.match(r'^\s*([a-zA-Z_0-9]+)\s*(\([^)]+\))?\s*[:-]\s*(.*)$', line)
+        if match:
+            param_name = match.group(1)
+            if param_name in param_names:
+                description = match.group(3).strip()
+                words = description.split()
+                if len(words) < 2:
+                    unclear_penalties += 0.25
+                
+    scores["clarity"] = max(1.0, min(5.0, clarity + 2.0 - unclear_penalties))
+    
+    # 4. CONCISENESS
+    word_count = len(docstring.split())
+    if 12 <= word_count <= 150:
+        scores["conciseness"] = 5.0
+    elif 8 <= word_count < 12:
+        scores["conciseness"] = 4.0
+    elif 150 < word_count <= 250:
+        scores["conciseness"] = 3.5
     else:
-        conciseness_score = 5.0
-        if len(docstring) > 600:
-            conciseness_score -= 1.5
-        elif len(docstring) > 400:
-            conciseness_score -= 0.8
-        scores["conciseness"] = max(1.0, conciseness_score)
+        scores["conciseness"] = 2.0
         
     return scores

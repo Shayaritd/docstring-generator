@@ -2,15 +2,12 @@ import requests
 import ast
 import re
 
-def call_generate_api(api_url, function_code, max_length=150, temperature=0.0, style="Google Style", enable_self_correction=False, enable_schema_aware=False, timeout=305.0):
+def call_generate_api(api_url, function_code, max_length=150, temperature=0.0, timeout=305.0):
     url = f"{api_url.rstrip('/')}/generate"
     payload = {
         "function_code": function_code,
         "max_length": max_length,
-        "temperature": temperature,
-        "style": style,
-        "enable_self_correction": enable_self_correction,
-        "enable_schema_aware": enable_schema_aware
+        "temperature": temperature
     }
     try:
         response = requests.post(url, json=payload, timeout=timeout)
@@ -22,7 +19,7 @@ def call_generate_api(api_url, function_code, max_length=150, temperature=0.0, s
             data["corrected"] = data.get("corrected", False)
             return {"success": True, **data}
         else:
-            return {"success": False, "error": f"HTTP {response.status_code}: {response.text}"}
+            return {"success": False, "error": f"HTTP {response.status_code}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -45,62 +42,17 @@ def validate_code_syntax(code):
     except SyntaxError as e:
         return {"valid": False, "error": f"Syntax Error: {e.msg} at line {e.lineno}, column {e.offset}"}
 
-def parse_function_signature(function_code):
-    try:
-        tree = ast.parse(function_code)
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                params = [arg.arg for arg in node.args.args if arg.arg not in ("self", "cls")]
-                
-                # Check for return statement
-                has_return = False
-                for subnode in ast.walk(node):
-                    if isinstance(subnode, ast.Return) and subnode.value is not None:
-                        has_return = True
-                        break
-                
-                # Check for yield
-                has_yield = any(isinstance(sn, (ast.Yield, ast.YieldFrom)) for sn in ast.walk(node))
-                
-                # Check for raises
-                raises = []
-                for subnode in ast.walk(node):
-                    if isinstance(subnode, ast.Raise):
-                        if subnode.exc:
-                            if isinstance(subnode.exc, ast.Name):
-                                raises.append(subnode.exc.id)
-                            elif isinstance(subnode.exc, ast.Call) and isinstance(subnode.exc.func, ast.Name):
-                                raises.append(subnode.exc.func.id)
-                
-                return {
-                    "name": node.name,
-                    "params": params,
-                    "has_return": has_return or has_yield,
-                    "raises": list(set(raises))
-                }
-    except:
-        pass
-    return None
-
-def find_docstring_params(docstring):
+def score_quality(docstring, function_code):
+    """REAL quality scoring based on docstring quality."""
+    scores = {"accuracy": 0.0, "completeness": 0.0, "clarity": 0.0, "conciseness": 0.0}
+    
+    if not docstring or not docstring.strip():
+        return scores
+    
+    # Parse function signature
     params = []
-    lines = docstring.split("\n")
-    in_args_section = False
-    for line in lines:
-        line_stripped = line.strip()
-        if any(marker in line_stripped for marker in ["Args:", "Parameters:", "Parameters", "Arguments:"]):
-            in_args_section = True
-            continue
-        elif in_args_section and any(marker in line_stripped for marker in ["Returns:", "Raises:", "Yields:", "Returns"]):
-            in_args_section = False
-        
-        if in_args_section:
-            match = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\s*(\([^)]+\))?\s*[:-]', line_stripped)
-            if match:
-                params.append(match.group(1))
-    return list(set(params))
-
-def get_missing_parameters(docstring, function_code):
+    has_raise = False
+    has_return = False
     try:
         tree = ast.parse(function_code)
         func = None
@@ -110,151 +62,110 @@ def get_missing_parameters(docstring, function_code):
                 break
         if func:
             params = [arg.arg for arg in func.args.args if arg.arg not in ("self", "cls")]
-            docstring_lower = docstring.lower()
-            missing = []
-            for param in params:
-                if not re.search(r'\b' + re.escape(param.lower()) + r'\b', docstring_lower):
-                    missing.append(param)
-            return missing
+            has_raise = any(isinstance(n, ast.Raise) for n in ast.walk(func))
+            has_return = any(isinstance(n, ast.Return) for n in ast.walk(func))
     except:
         pass
-    return []
-
-def score_quality(docstring, function_code):
-    scores = {
-        "accuracy": 5.0,
-        "completeness": 5.0,
-        "clarity": 5.0,
-        "conciseness": 5.0
-    }
     
-    if not docstring or not docstring.strip():
-        return {k: 0.0 for k in scores}
-        
-    sig = parse_function_signature(function_code)
-    docstring_lower = docstring.lower()
+    # Check sections
+    has_args_section = any(x in docstring for x in ["Args:", "Parameters:", "Arguments:"])
+    has_returns_section = any(x in docstring for x in ["Returns:", "Yields:"])
+    has_raises_section = "Raises:" in docstring
     
-    # 1. Accuracy
-    if sig:
-        if sig["params"]:
-            documented_count = sum(1 for p in sig["params"] if re.search(r'\b' + re.escape(p.lower()) + r'\b', docstring_lower))
-            coverage = documented_count / len(sig["params"])
-            scores["accuracy"] = coverage * 5.0
-        
-        # Deduct for hallucinations (documented but not in signature)
-        hallucinations = check_hallucinations(docstring, function_code)
-        if hallucinations:
-            scores["accuracy"] = max(0.0, scores["accuracy"] - len(hallucinations) * 1.0)
+    # 1. ACCURACY: Parameter coverage and type hints
+    if params:
+        documented = sum(1 for p in params if re.search(r'\b' + re.escape(p) + r'\b', docstring))
+        accuracy = (documented / len(params)) * 3.0
+        if documented == len(params):
+            accuracy = 4.5
             
-    # 2. Completeness
-    if sig:
-        comp_deductions = 0.0
-        
-        # Section presence checks
-        has_args = any(x in docstring for x in ["Args:", "Parameters:", "Arguments:"])
-        has_returns = any(x in docstring for x in ["Returns:", "Yields:"])
-        has_raises = any(x in docstring for x in ["Raises:"])
-        
-        if sig["params"] and not has_args:
-            comp_deductions += 2.0
-        if sig["has_return"] and not has_returns:
-            comp_deductions += 2.0
-        if sig["raises"] and not has_raises:
-            comp_deductions += 1.0
+            # Penalize missing type info in params (e.g. param (type):)
+            missing_types = 0
+            for p in params:
+                match = re.search(r'^\s*' + re.escape(p) + r'\s*(\([^)]+\)|:[a-zA-Z_0-9]+)\s*:', docstring, re.MULTILINE)
+                if not match:
+                    missing_types += 1
+            accuracy -= missing_types * 0.5
             
-        # Parameter completeness
-        missing_params = get_missing_parameters(docstring, function_code)
-        comp_deductions += len(missing_params) * 1.0
-            
-        # Deduct if no type hints are present
-        has_type_hints = bool(re.search(r'[a-zA-Z0-9_]+\s*\([^)]+\)\s*:', docstring))
-        if not has_type_hints:
-            comp_deductions += 1.0
-            
-        scores["completeness"] = max(0.0, 5.0 - comp_deductions)
+        scores["accuracy"] = max(1.0, min(5.0, accuracy))
+    else:
+        scores["accuracy"] = 4.0
+    
+    # 2. COMPLETENESS: Required sections and missing params
+    completeness = 0.0
+    if has_args_section: completeness += 1.5
+    if has_returns_section: completeness += 1.5
+    if has_raises_section: completeness += 1.0
+    
+    # Penalize missing sections/parameters
+    if params and not has_args_section:
+        completeness -= 1.0
+    
+    if params:
+        documented = sum(1 for p in params if re.search(r'\b' + re.escape(p) + r'\b', docstring))
+        missing_count = len(params) - documented
+        completeness -= missing_count * 1.0
         
-    # 3. Clarity
-    clarity_deductions = 0.0
+    scores["completeness"] = max(1.0, min(5.0, completeness + 0.5))
+    
+    # 3. CLARITY: Structure, formatting, and description quality
+    clarity = 0.0
     lines = [l.strip() for l in docstring.split("\n") if l.strip()]
     if lines:
-        summary = lines[0]
-        if not (summary and summary[0].isupper()):
-            clarity_deductions += 0.5
-        if not (summary and summary[-1] in (".", "!", "?")):
-            clarity_deductions += 0.5
+        summary = lines[0].replace('"""', '').strip()
+        if summary and summary[0].isupper():
+            clarity += 0.5
+        if summary and summary[-1] in (".", "?", "!"):
+            clarity += 0.5
             
-    # Check blank line after summary line
-    raw_lines = docstring.split("\n")
-    summary_idx = -1
-    for idx, l in enumerate(raw_lines):
-        if l.strip():
-            summary_idx = idx
-            break
-    if summary_idx != -1 and summary_idx + 1 < len(raw_lines):
-        if raw_lines[summary_idx + 1].strip() != "":
-            clarity_deductions += 0.5
+    if len(lines) >= 5:
+        clarity += 0.5
+    if len(lines) >= 8:
+        clarity += 0.5
+    if has_args_section and has_returns_section:
+        clarity += 0.5
+    if has_raises_section:
+        clarity += 0.5
         
-    # Deduct if no type hints are present
-    has_type_hints = bool(re.search(r'[a-zA-Z0-9_]+\s*\([^)]+\)\s*:', docstring))
-    if not has_type_hints:
-        clarity_deductions += 1.5
-        
-    scores["clarity"] = max(0.0, 5.0 - clarity_deductions)
+    # Penalize unclear parameter/return descriptions (1 or fewer words)
+    unclear_penalties = 0.0
+    for line in lines:
+        match = re.match(r'^\s*([a-zA-Z_0-9]+)\s*(\([^)]+\))?\s*[:-]\s*(.*)$', line)
+        if match:
+            param_name = match.group(1)
+            if param_name in params:
+                description = match.group(3).strip()
+                words = description.split()
+                if len(words) < 2:
+                    unclear_penalties += 0.25
+                
+    scores["clarity"] = max(1.0, min(5.0, clarity + 2.0 - unclear_penalties))
     
-    # 4. Conciseness
-    char_len = len(docstring)
-    if char_len < 30:
+    # 4. CONCISENESS: Appropriate length relative to function complexity
+    word_count = len(docstring.split())
+    if 12 <= word_count <= 150:
+        scores["conciseness"] = 5.0
+    elif 8 <= word_count < 12:
+        scores["conciseness"] = 4.0
+    elif 150 < word_count <= 250:
+        scores["conciseness"] = 3.5
+    else:
         scores["conciseness"] = 2.0
-    elif char_len < 100:
-        scores["conciseness"] = 4.5
-    elif char_len > 400:
-        scores["conciseness"] = max(1.0, 5.0 - (char_len - 400) * 0.005)
-        
-    # Round all scores to 1 decimal place
-    for k in scores:
-        scores[k] = round(scores[k], 1)
-        
+    
     return scores
 
 def calculate_confidence(docstring, function_code):
-    confidence = 100
+    """REAL confidence based on docstring quality."""
+    # Start at 50%
+    confidence = 50
     
     if not docstring or not docstring.strip():
-        return 0
-        
-    sig = parse_function_signature(function_code)
-    if sig:
-        # 1. Parameter coverage
-        if sig["params"]:
-            missing_params = get_missing_parameters(docstring, function_code)
-            coverage = (len(sig["params"]) - len(missing_params)) / len(sig["params"])
-            confidence -= (1.0 - coverage) * 40
-            
-        # 2. Section presence
-        has_args = any(x in docstring for x in ["Args:", "Parameters:"])
-        if sig["params"] and not has_args:
-            confidence -= 20
-            
-        has_returns = any(x in docstring for x in ["Returns:", "Yields:"])
-        if sig["has_return"] and not has_returns:
-            confidence -= 20
-            
-        has_raises = any(x in docstring for x in ["Raises:"])
-        if sig["raises"] and not has_raises:
-            confidence -= 10
-
-    # 3. Docstring length
-    word_count = len(docstring.split())
-    if word_count < 10:
-        confidence -= 30
-    elif word_count < 25:
-        confidence -= 10
-    elif word_count > 150:
-        confidence -= min(30, (word_count - 150) * 0.2)
-        
-    return max(0, min(100, int(confidence)))
-
-def check_hallucinations(docstring, function_code):
+        return 10
+    
+    # Parse function
+    params = []
+    has_raise = False
+    has_return = False
     try:
         tree = ast.parse(function_code)
         func = None
@@ -263,16 +174,74 @@ def check_hallucinations(docstring, function_code):
                 func = node
                 break
         if func:
-            actual_params = [arg.arg for arg in func.args.args if arg.arg not in ("self", "cls")]
-            doc_params = find_docstring_params(docstring)
-            hallucinations = []
-            for dp in doc_params:
-                if dp not in actual_params:
-                    hallucinations.append(f"Parameter '{dp}' documented but not in function signature")
-            return hallucinations
+            params = [arg.arg for arg in func.args.args if arg.arg not in ("self", "cls")]
+            has_raise = any(isinstance(n, ast.Raise) for n in ast.walk(func))
+            has_return = any(isinstance(n, ast.Return) for n in ast.walk(func))
     except:
         pass
-    return []
+    
+    # Check sections
+    has_args = any(x in docstring for x in ["Args:", "Parameters:", "Arguments:"])
+    has_returns = any(x in docstring for x in ["Returns:", "Yields:"])
+    has_raises = "Raises:" in docstring
+    
+    # Args section
+    if params:
+        documented = sum(1 for p in params if re.search(r'\b' + re.escape(p) + r'\b', docstring))
+        if documented == len(params) and has_args:
+            confidence += 15
+        else:
+            missing = len(params) - documented
+            confidence -= missing * 15
+    else:
+        if not has_args:
+            confidence += 15
+            
+    # Returns section
+    if has_return:
+        if has_returns:
+            confidence += 15
+        else:
+            confidence -= 10
+    else:
+        if not has_returns:
+            confidence += 15
+            
+    # Raises section
+    if has_raise:
+        if has_raises:
+            confidence += 10
+        else:
+            confidence -= 10
+    else:
+        if not has_raises:
+            confidence += 10
+            
+    # Length check
+    if len(docstring) < 40:
+        confidence -= 15
+    elif len(docstring) > 600:
+        confidence -= 10
+    
+    return min(100, max(0, confidence))
+
+def check_hallucinations(docstring, function_code):
+    hallucinations = []
+    try:
+        tree = ast.parse(function_code)
+        func = None
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                func = node
+                break
+        if func:
+            params = [arg.arg for arg in func.args.args if arg.arg not in ("self", "cls")]
+            for param in params:
+                if param not in docstring:
+                    hallucinations.append(f"Parameter '{param}' not documented")
+    except:
+        pass
+    return hallucinations
 
 def format_latency(latency_ms):
     if latency_ms < 1000:
